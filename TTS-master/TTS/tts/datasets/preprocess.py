@@ -160,7 +160,7 @@ def ljspeech(root_path, meta_file):
     with open(txt_file, 'r') as ttf:
         for line in ttf:
             cols = line.split('|')
-            wav_file = os.path.join(root_path, 'wavs', cols[0] + '.wav')
+            wav_file = os.path.join(root_path, cols[0])
             text = cols[1]
             items.append([text, wav_file, speaker_name])
     return items

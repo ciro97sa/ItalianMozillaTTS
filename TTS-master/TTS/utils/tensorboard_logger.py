@@ -31,8 +31,8 @@ class TensorboardLogger(object):
                     param.std(), step)
                 self.writer.add_histogram(
                     "layer{}-{}/param".format(layer_num, name), param, step)
-                self.writer.add_histogram(
-                    "layer{}-{}/grad".format(layer_num, name), param.grad, step)
+               # self.writer.add_histogram(
+                    #"layer{}-{}/grad".format(layer_num, name), param.grad, step)
             layer_num += 1
 
     def dict_to_tb_scalar(self, scope_name, stats, step):

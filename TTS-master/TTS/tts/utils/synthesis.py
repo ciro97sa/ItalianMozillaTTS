@@ -233,6 +233,7 @@ def synthesis(model,
             style_mel = compute_style_mel(style_wav, ap, cuda=use_cuda)
     # preprocess the given text
     inputs = text_to_seqvec(text, CONFIG)
+    print(inputs)
     # pass tensors to backend
     if backend == 'torch':
         if speaker_id is not None:
