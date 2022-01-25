@@ -7,17 +7,13 @@ import time
 import json
 import yaml
 
-sys.path.append("/home/Ciro/Desktop/ItalianMoziillaTTS/TTS-master/TTS")
+sys.path.append("/Users/cirosannino/Documents/LessonAble/training/Audio/ItalianMozillaTTS/TTS-master/TTS/")
 
 import numpy as np
 from collections import OrderedDict
-import matplotlib.pyplot as plt
-plt.rcParams["figure.figsize"] = (16,5)
-
 
 import librosa
 import librosa.display
-
 from TTS.tts.models.tacotron import Tacotron 
 from TTS.tts.layers import *
 from TTS.tts.utils.data import *
@@ -32,41 +28,83 @@ from TTS.tts.utils.visual import visualize
 from TTS.tts.utils.text.symbols import symbols, phonemes, make_symbols
 from TTS.utils.generic_utils import count_parameters
 from TTS.vocoder.utils.generic_utils import setup_generator
-
-import IPython
-from IPython.display import Audio
-
 import os
 
 # you may need to change this depending on your system
 os.environ['CUDA_VISIBLE_DEVICES']='0'
 
-##### Set constants
-MODEL_PATH =  '/home/Ciro/Desktop/ItalianMoziillaTTS/TTS-master/Italian_FineTuning-January-13-2022_02+16AM-cc045df/best_model.pth.tar'  
-CONFIG_PATH =  "/home/Ciro/Desktop/ItalianMoziillaTTS/TTS-master/Italian_FineTuning-January-13-2022_02+16AM-cc045df/config.json"   
-
-VOCODER_MODEL_PATH =  "/home/Ciro/Desktop/ItalianMoziillaTTS/TTS-master/TTS/vocoder/models/vocoder.pth.tar" 
-VOCODER_CONFIG_PATH =  "/home/Ciro/Desktop/ItalianMoziillaTTS/TTS-master/TTS/vocoder/configs/config_vocoder.json" 
-
-OUT_FOLDER = "" #'/content/drive/MyDrive/voc_2'
-
-CONFIG = load_config(CONFIG_PATH)
-CONFIG.audio['stats_path'] = None
-VOCODER_CONFIG = load_config(VOCODER_CONFIG_PATH)
-VOCODER_CONFIG.audio['stats_path'] = None
-#"/home/Ciro/Desktop/ItalianMoziillaTTS/TTS-master/TTS/vocoder/scale_stats_wavegrad.npy"
-#"/home/Ciro/Desktop/ItalianMoziillaTTS/TTS-master/TTS/vocoder/scale_stats_wavegrad.npy"
-
-# load the audio processor
-ap = AudioProcessor(**CONFIG.audio)   
+def italian_synthesis(c, OUT_PATH, text):
+    MODEL_PATH =  c['audio']['model_path']
+    CONFIG_PATH = c['audio']['model_config']
+    VOCODER_MODEL_PATH =  c['audio']['vocoder_path']
+    VOCODER_CONFIG_PATH =  c['audio']['vocoder_config']
     
-# Run FLAGs
-use_cuda = True
-# Set some config fields manually for testing
-# CONFIG.windowing = False
-CONFIG.use_forward_attn = False
+    CONFIG = load_config(CONFIG_PATH)   
+    CONFIG.audio['stats_path'] = None
+    VOCODER_CONFIG = load_config(VOCODER_CONFIG_PATH)
+    VOCODER_CONFIG.audio['stats_path'] = None
+    
+    ap = AudioProcessor(**CONFIG.audio)   
+    
+    use_cuda = True
+
+    CONFIG.use_forward_attn = False
+
 # Set the vocoder
-use_gl = True # use GL if True
+    use_gl = True # use GL if True
+
+    SPEAKER_JSON =  c['audio']['speaker_embedding_json']
+    SPEAKER_FILEID = None # if None use the first embedding from speakers.json
+    if SPEAKER_JSON != '':
+        speaker_mapping = json.load(open(SPEAKER_JSON, 'r')) #legge tutto il dizionario
+        num_speakers = len(speaker_mapping) #noi abbiamo tanti speaker quante clip xk abbiamo estratto 1 clip x speaker. 
+        if CONFIG.use_external_speaker_embedding_file:
+            if SPEAKER_FILEID is not None:
+                speaker_embedding = speaker_mapping[SPEAKER_FILEID]['embedding']
+            else: # if speaker_fileid is not specificated use the first sample in speakers.json
+                choise_speaker = list(speaker_mapping.keys())[0]
+                print(" Speaker: ", choise_speaker.split('_')[0],'was chosen automatically', "(this speaker seen in training)")
+                speaker_embedding = speaker_mapping[choise_speaker]['embedding']
+            speaker_embedding_dim = len(speaker_embedding) #256
+    
+    if 'characters' in CONFIG.keys():
+        symbols, phonemes = make_symbols(**CONFIG.characters)
+
+# load the model
+    num_chars = len(phonemes) if CONFIG.use_phonemes else len(symbols)
+    model = setup_model(num_chars, num_speakers, CONFIG, speaker_embedding_dim)      
+
+# load model state
+    model, _ =  load_checkpoint(model, MODEL_PATH, use_cuda=use_cuda)
+
+# count model parameters 
+
+    model.eval();
+
+    from TTS.vocoder.utils.generic_utils import setup_generator
+
+# LOAD VOCODER MODEL
+    vocoder_model = setup_generator(VOCODER_CONFIG)
+    vocoder_model.load_state_dict(torch.load(VOCODER_MODEL_PATH, map_location="cpu")["model"])
+    vocoder_model.remove_weight_norm()
+    vocoder_model.inference_padding = 0
+# scale factor for sampling rate difference
+    scale_factor = [1,  VOCODER_CONFIG['audio']['sample_rate'] / ap.sample_rate]
+    print(f"scale_factor: {scale_factor}")
+
+    ap_vocoder = AudioProcessor(**VOCODER_CONFIG['audio'])    
+    if use_cuda:
+        vocoder_model.cuda()
+    vocoder_model.eval();
+
+    speaker_id = "Registrazione_Ad_Hoc_3.wav"
+
+ ## select the target speaker
+    speaker_embedding = get_speaker_embedding([speaker_id],  speaker_mapping, 1)  
+    _, _, _, wav, target_sr = tts(model, text, CONFIG, VOCODER_CONFIG, vocoder_model, ap_vocoder, scale_factor, use_cuda, ap, use_gl=use_gl, figures=True, file_name='ls1.wav', speaker_id=None, speaker_embedding=speaker_embedding)
+    from scipy.io.wavfile import write
+    write(OUT_PATH, target_sr, wav)
+
 
 def interpolate_vocoder_input(scale_factor, spec):
     print(" > before interpolation :", spec.shape)
@@ -89,7 +127,7 @@ def get_speaker_embedding(speaker_ids, speaker_mapping, num_samples):
     return speaker_embedding
     
 
-def tts(model, text, CONFIG, use_cuda, ap, use_gl, figures=True, file_name=None, speaker_id=None, speaker_embedding=None):
+def tts(model, text, CONFIG, VOCODER_CONFIG, vocoder_model, ap_vocoder, scale_factor, use_cuda, ap, use_gl, figures=True, file_name=None, speaker_id=None, speaker_embedding=None):
     t_1 = time.time()
     waveform, alignment, mel_spec, mel_postnet_spec, stop_tokens, inputs = synthesis(model,
                                                                                      text,
@@ -133,66 +171,9 @@ def tts(model, text, CONFIG, use_cuda, ap, use_gl, figures=True, file_name=None,
 
     # # display audio
     # IPython.display.display(IPython.display.Audio(waveform, rate=target_sr))  
-    return alignment, mel_postnet_spec, stop_tokens, waveform
+    return alignment, mel_postnet_spec, stop_tokens, waveform, target_sr
 
     # LOAD TTS MODEL
  
 # load speakers
 # VCTK speakers not seen in training (new speakers)
-
-
-SPEAKER_JSON =  '/home/Ciro/Desktop/ItalianMoziillaTTS/TTS-master/Italian_FineTuning-January-13-2022_02+16AM-cc045df/speakers.json'
-SPEAKER_FILEID = None # if None use the first embedding from speakers.json
-if SPEAKER_JSON != '':
-    speaker_mapping = json.load(open(SPEAKER_JSON, 'r')) #legge tutto il dizionario
-    num_speakers = len(speaker_mapping) #noi abbiamo tanti speaker quante clip xk abbiamo estratto 1 clip x speaker. 
-    print(num_speakers)
-    if CONFIG.use_external_speaker_embedding_file:
-        if SPEAKER_FILEID is not None:
-            speaker_embedding = speaker_mapping[SPEAKER_FILEID]['embedding']
-        else: # if speaker_fileid is not specificated use the first sample in speakers.json
-            choise_speaker = list(speaker_mapping.keys())[0]
-            print(" Speaker: ", choise_speaker.split('_')[0],'was chosen automatically', "(this speaker seen in training)")
-            speaker_embedding = speaker_mapping[choise_speaker]['embedding']
-        speaker_embedding_dim = len(speaker_embedding) #256
-    
-if 'characters' in CONFIG.keys():
-    symbols, phonemes = make_symbols(**CONFIG.characters)
-
-# load the model
-num_chars = len(phonemes) if CONFIG.use_phonemes else len(symbols)
-model = setup_model(num_chars, num_speakers, CONFIG, speaker_embedding_dim)      
-
-# load model state
-model, _ =  load_checkpoint(model, MODEL_PATH, use_cuda=use_cuda)
-
-# count model parameters 
-print(count_parameters(model))
-model.eval();
-
-from TTS.vocoder.utils.generic_utils import setup_generator
-
-# LOAD VOCODER MODEL
-vocoder_model = setup_generator(VOCODER_CONFIG)
-vocoder_model.load_state_dict(torch.load(VOCODER_MODEL_PATH, map_location="cpu")["model"])
-vocoder_model.remove_weight_norm()
-vocoder_model.inference_padding = 0
-# scale factor for sampling rate difference
-scale_factor = [1,  VOCODER_CONFIG['audio']['sample_rate'] / ap.sample_rate]
-print(f"scale_factor: {scale_factor}")
-
-ap_vocoder = AudioProcessor(**VOCODER_CONFIG['audio'])    
-if use_cuda:
-    vocoder_model.cuda()
-vocoder_model.eval();
-
-speaker_id = "Registrazione_Ad_Hoc_3.wav"
-
- ## select the target speaker
-speaker_embedding = get_speaker_embedding([speaker_id],  speaker_mapping, 1)
-
-print(speaker_id) 
-sentence =  "Mi piace la mia vita, molto entusiasmante." 
-align, spec, stop_toens, wav = tts(model, sentence, CONFIG, use_cuda, ap, use_gl=use_gl, figures=True, file_name='ls1.wav', speaker_id=None, speaker_embedding=speaker_embedding)
-from scipy.io.wavfile import write
-write("out.wav", 22050, wav)
