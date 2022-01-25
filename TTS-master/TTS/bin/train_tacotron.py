@@ -432,8 +432,8 @@ def evaluate(data_loader, model, criterion, ap, global_step, epoch):
     if args.rank == 0 and epoch > c.test_delay_epochs:
         if c.test_sentences_file is None:
             test_sentences = [
-                "Salve, sono il professore Sansone.",
-                "Oggi vi svelerò un trucco di magia."
+                "Ciao ragazzi, sono il professore Sansone.",
+                "Voglio illustrarvi un magico mondo."
             ]
         else:
             with open(c.test_sentences_file, "r") as f:

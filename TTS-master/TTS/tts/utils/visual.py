@@ -57,6 +57,7 @@ def plot_spectrogram(spectrogram,
     plt.tight_layout()
     if not output_fig:
         plt.close()
+        
     return fig
 
 
